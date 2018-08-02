@@ -13,7 +13,7 @@
 #include "matplotlibcpp.h"
 namespace plt = matplotlibcpp;
 const int max_iters = 100;
-const bool plot = FALSE;
+const bool plot = false;
 
 // for convenience
 using json = nlohmann::json;
