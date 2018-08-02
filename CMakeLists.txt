@@ -25,5 +25,5 @@ endif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 add_executable(mpc ${sources})
 
-target_link_libraries(mpc ipopt z ssl uv uWS)
+target_link_libraries(mpc ipopt z ssl uv uWS python)
 

@@ -9,8 +9,16 @@
 #include "MPC.h"
 #include "json.hpp"
 
+// plot
+#include "matplotlibcpp.h"
+namespace plt = matplotlibcpp;
+const int max_iters = 100;
+const bool plot = FALSE;
+
 // for convenience
 using json = nlohmann::json;
+
+const long latency = 100; // 100ms latency delay
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -71,7 +79,18 @@ int main() {
   // MPC is initialized here!
   MPC mpc;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  // plot
+  int iters = 0;
+  std::vector<double> x_vals = {};
+  std::vector<double> y_vals = {};
+  std::vector<double> psi_vals = {};
+  std::vector<double> v_vals = {};
+  std::vector<double> cte_vals = {};
+  std::vector<double> epsi_vals = {};
+  std::vector<double> delta_vals = {};
+  std::vector<double> a_vals = {};
+
+  h.onMessage([&mpc, &iters, &x_vals, &y_vals, &psi_vals, &v_vals, &cte_vals, &epsi_vals, &delta_vals, &a_vals](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -91,15 +110,85 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          double delta = j[1]["steering_angle"];
+          double a = j[1]["throttle"];
+
+
+          /* 1. Simulate latency
+          *
+          * In a real car, an actuation command won't execute instantly 
+          * - there will be a delay as the command propagates through 
+          * the system. A realistic delay might be on the order of 100 
+          * milliseconds.
+          *
+          */
+          std::vector<double> state0 = {px, py, psi, v};
+          std::vector<double> actuations0 = {a, delta};
+          std::vector<double> state1 = mpc.Simulate(state0, actuations0, latency/1000);
+
+
+          /* 2. Transfrom the waypoints from map's coordinates to vehicle's coordinates
+          *
+          * 1. Shift ptsx and ptsy to car's origin.
+          * 2. Rotate ptsx and ptsy from map's coordinates to car's coordinates, w.r.t psi
+          *
+          */
+          // x, y, psi, v after latency 100ms
+          double px1 = state1[0];
+          double py1 = state1[1];
+          double psi1 = state1[2];
+          double v1 = state1[3];
+
+          size_t n_waypoints = ptsx.size();
+          auto ptsx_transformed = Eigen::VectorXd(n_waypoints);
+          auto ptsy_transformed = Eigen::VectorXd(n_waypoints);
+          for (unsigned int i = 0; i < n_waypoints; i++ ) {
+            double dX = ptsx[i] - px1;
+            double dY = ptsy[i] - py1;
+            ptsx_transformed(i) = dX * cos(-psi1) - dY * sin(-psi1);
+            ptsy_transformed(i) = dX * sin(-psi1) + dY * cos(-psi1);
+          }
+
+          // 3. Fit a polynomial to the waypoints
+          auto coeffs = polyfit(ptsx_transformed, ptsy_transformed, 3);
+
+          // 4. Calculate errors: cte and epsi
+          double cte = polyeval(coeffs, 0) - 0;
+          double epsi = 0 - atan(coeffs[1]);
+
+          // plot
+          if(plot){
+            iters++;
+            x_vals.push_back(px1);
+            y_vals.push_back(py1);
+            psi_vals.push_back(psi1);
+            v_vals.push_back(v1);
+            cte_vals.push_back(cte);
+            epsi_vals.push_back(epsi);    
+            delta_vals.push_back(delta);
+            a_vals.push_back(a);
+          }
 
           /*
-          * TODO: Calculate steering angle and throttle using MPC.
+          * Calculate steering angle and throttle using MPC.
           *
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+
+          // State vector
+          Eigen::VectorXd state(6);
+          state << 0, 0, 0, v1, cte, epsi;
+
+
+
+          // Find MPC solution
+          auto mpc_actuactions = mpc.Solve(state, coeffs); 
+          double mpc_delta = mpc_actuactions[0];
+          double mpc_a = mpc_actuactions[1];
+
+          double steer_value = mpc_delta/deg2rad(25);
+          double throttle_value = mpc_a;
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -111,6 +200,14 @@ int main() {
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
 
+          for (unsigned int i = 2; i < mpc_actuactions.size(); i++) {
+            if (i % 2 == 0) {
+              mpc_x_vals.push_back(mpc_actuactions[i]);
+            } else {
+              mpc_y_vals.push_back(mpc_actuactions[i]);
+            }
+          }
+
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
 
@@ -120,6 +217,11 @@ int main() {
           //Display the waypoints/reference line
           vector<double> next_x_vals;
           vector<double> next_y_vals;
+
+          for (int i = 0; i < ptsx_transformed.size(); i++) {
+            next_x_vals.push_back(ptsx_transformed[i]);
+            next_y_vals.push_back(ptsy_transformed[i]);
+          }
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
@@ -139,8 +241,24 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(latency));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+
+          if(iters > max_iters && plot){
+            //Plot Values, first 100 iterations
+            plt::subplot(3, 1, 1);
+            plt::title("CTE");
+            plt::plot(cte_vals);
+            plt::subplot(3, 1, 2);
+            plt::title("Delta (Radians)");
+            plt::plot(delta_vals);
+            plt::subplot(3, 1, 3);
+            plt::title("Velocity");
+            plt::plot(v_vals);      
+            plt::show();
+            iters = 0;
+            exit(1);
+          }
         }
       } else {
         // Manual driving

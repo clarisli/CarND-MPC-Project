@@ -1,9 +1,24 @@
-# CarND-Controls-MPC
-Self-Driving Car Engineer Nanodegree Program
+## CarND-Controls-MPC
 
----
+The goals/steps of this project are the following:
 
-## Dependencies
+* Set timesteps N and time elapses between actuations dt
+* Fit the polynomial to the waypoints
+* Calculate initial cross track error and orientation error values
+* Define the components of the cost function (state, actuators, etc).
+* Define the model constraints.
+* Handels 100 ms latency.
+
+
+[//]: # (Image References)
+[image1]: ./images/mpc_setup.png
+[image2]: ./images/kinetic_model.png
+[image3]: ./images/figure_1.png
+[image4]: ./images/mpc.gif
+
+![alt text][image4]
+
+### Dependencies
 
 * cmake >= 3.5
  * All OSes: [click here for installation instructions](https://cmake.org/install/)
@@ -30,79 +45,127 @@ Self-Driving Car Engineer Nanodegree Program
 * Simulator. You can download these from the [releases tab](https://github.com/udacity/self-driving-car-sim/releases).
 * Not a dependency but read the [DATA.md](./DATA.md) for a description of the data sent back from the simulator.
 
-
-## Basic Build Instructions
-
+### Basic Build Instructions
 1. Clone this repo.
 2. Make a build directory: `mkdir build && cd build`
 3. Compile: `cmake .. && make`
 4. Run it: `./mpc`.
 
-## Tips
 
-1. It's recommended to test the MPC on basic examples to see if your implementation behaves as desired. One possible example
-is the vehicle starting offset of a straight line (reference). If the MPC implementation is correct, after some number of timesteps
-(not too many) it should find and track the reference line.
-2. The `lake_track_waypoints.csv` file has the waypoints of the lake track. You could use this to fit polynomials and points and see of how well your model tracks curve. NOTE: This file might be not completely in sync with the simulator so your solution should NOT depend on it.
-3. For visualization this C++ [matplotlib wrapper](https://github.com/lava/matplotlib-cpp) could be helpful.)
-4.  Tips for setting up your environment are available [here](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/0949fca6-b379-42af-a919-ee50aa304e6a/lessons/f758c44c-5e40-4e01-93b5-1a82aa4e044f/concepts/23d376c7-0195-4276-bdf0-e02f1f3c665d)
-5. **VM Latency:** Some students have reported differences in behavior using VM's ostensibly a result of latency.  Please let us know if issues arise as a result of a VM environment.
+### MPC Implementation
 
-## Editor Settings
+![alt text][image1]
 
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
+MPC reframes the task of following a trajectory to an optimization problem. 
+ 
+Self-driving car uses the center of the lane as its reference trajectory. The MPC simulates different actuator inputs, predicts the resulting trajectory and select the trajectory with minimum cost. 
+ 
+The cost is the offset from the reference state.
 
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
+MPC optimizes the actuator inputs at each timestep in time to minimize this cost. Once found the lowest cost trajectory, it uses the first set of actuation commands and throw the calculated trajectory away. It then use the new state to calculate a new optimal trajectory. Since it's constantly calculating inputs over the future horizon, it's also called **receding horizon control**.
 
-## Code Style
 
-Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
+#### 1. Set N and dt
+I tuned the hyperparameters N, dt, and T for the MPC.
 
-## Project Instructions and Rubric
+* **T:** the prediciton horizon is the duration over which future predictions are made. 
+* **N:** the number of timesteps in the horizon. 
+* **dt:** time elapses between actuations
 
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
+*T* is the product of *N* and *dt*, *T = N x dt*.
 
-More information is only accessible by people who are already enrolled in Term 2
-of CarND. If you are enrolled, see [the project page](https://classroom.udacity.com/nanodegrees/nd013/parts/40f38239-66b6-46ec-ae68-03afd8a601c8/modules/f1820894-8322-4bb3-81aa-b26b3c6dcbaf/lessons/b1ff3be0-c904-438e-aad3-2b5379f0e0c3/concepts/1a2255a0-e23c-44cf-8d41-39b8a3c8264a)
-for instructions and the project rubric.
+The general guideline is to set *T* as large as possible, and *dt* as small as possible. Larger values of *dt* result in less frequent actuation, which makes it harder to accurately approximate a continuous reference trajectory.
 
-## Hints!
+I did this in lines 9 and 10 in `MPC.cpp`.
 
-* You don't have to follow this directory structure, but if you do, your work
-  will span all of the .cpp files here. Keep an eye out for TODOs.
+#### 2. Fit the polynomials to waypoints
 
-## Call for IDE Profiles Pull Requests
+I first transfromed the waypoints from maps' coordinates to vehicle's coordinates. I did this in 2 steps:
 
-Help your fellow students!
+1. Shift waypoints to the vehicle's origin
+2. Rotate the waypoints through homogenous transformation matrix
 
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to we ensure
-that students don't feel pressured to use one IDE or another.
+I did this in lines 120 to 133 in `main.cpp`.
 
-However! I'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
+The reference trajectory is passed to control block as 3rd order polynomial. I fit a polynomial to the transformed waypoints in vehicle's coordinates. I did this in line 136 in `main.cpp`, and the function `polyfit()` is implemented in lines 49 to 68 in `main.cpp`.
 
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
+#### 3. Calculate cross track error and orientation error
 
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
+Assum the vehicle is travelling a straight road and the longitudinal direction is teh same as the x-axis:
 
-Frankly, I've never been involved in a project with multiple IDE profiles
-before. I believe the best way to handle this would be to keep them out of the
-repo root to avoid clutter. My expectation is that most profiles will include
-instructions to copy files to a new location to get picked up by the IDE, but
-that's just a guess.
+The cross track error (cte) is the difference between the difference between the line and the current vehicle position y. The reference line is the 3rd order polynomial *f(x)* and CTE at the current state is defined as:
 
-One last note here: regardless of the IDE used, every submitted project must
-still be compilable with cmake and make./
+```
+cte = f(x) - y
+```
 
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
+The orientation error (eψ) is the desired orientation subtracted from the current orientation.
+
+```
+eψ = ψ - ψdes
+```
+ ​	
+ψ is known as part of the state. I calculated ψdes (desired psi) as the tangential angle of the polynomil *f* evaluated at *x*, *arctan(f'(x))*. *f'* is the derivative of the polynomial.
+
+I did this in lines 139 and 140 in `main.cpp`.
+
+#### 4. Define the cost function
+
+cte and eψ should be zero. 
+
+```
+cost = 0
+for (int t=0, t < N, t++) {
+	cost += pow(cte[t], 2)
+	cost += pow(epsi[t], 2)
+}
+```
+
+If vehicle comes to this idealized state in the trajector (i.e., cte and eψ both are zero), the vehicle might stop. Therefore I set a reference velocity to be 40 mph.
+
+```
+cost += pow(v[t] - ref_v, 2)
+```
+
+To penalize magnitude of the input and its change rate, I also included control inputs in the cost.
+
+```
+cost += pow(delta[t],2)
+cost += pow(delta[t+1] - delta[t], 2) 
+```
+
+I also reduced the speed at turns:
+
+```
+cost += pow(v[t] * delta[t], 2)
+```
+
+
+I did this in lines 57 to 76 in `MPC.cpp`.
+
+
+#### 5. Define model constraints
+
+The vehicle model is defined as following:
+
+![alt text][image2]
+
+I defined this model by constraining the state at time t+1 by setting the values within `fg` to the difference of state at time t+1 and above formula. I did this in lines 118 to 125 in `MPC.cpp`. 
+
+Except the initial state, I also set the corresponding `constraints_lowerbound` and the `constraints_upperbound` values to 0. This force the relationships described by the model to hold true. I did this in lines 204 to 223 in `MPC.cpp`.
+ 
+#### 6. Handle Latency
+
+In a real car, an actuation command won't execute instantly = there will be a delay ~100ms as the command propagates throught the system.
+
+To overcome, I modeled this latency in the MPC system. I simulated using the vehicle model starting from the current state for the duration of the latency. The resulting state from the simulation is the new initial state for MPC.
+
+I did this simulation in lines 278 to 292 in the function `Simulate()` of `MPC.cpp`, and lines 100 to 110 in `main.cpp`.
+
+#### 7. Tuning MPC
+
+I tuned the MPC by plotting the CTE, steering angle, and speed errors in the first 100 iterations:
+
+![alt text][image3]
+
+I multiplied different parts of the cost function with values > 1 to obtain smoother transitions.
