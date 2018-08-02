@@ -76,6 +76,8 @@ I tuned the hyperparameters N, dt, and T for the MPC.
 
 The general guideline is to set *T* as large as possible, and *dt* as small as possible. Larger values of *dt* result in less frequent actuation, which makes it harder to accurately approximate a continuous reference trajectory.
 
+I set `N = 10` and `dt = 0.1`.
+
 I did this in lines 9 and 10 in `MPC.cpp`.
 
 #### 2. Fit the polynomials to waypoints
@@ -91,7 +93,7 @@ The reference trajectory is passed to control block as 3rd order polynomial. I f
 
 #### 3. Calculate cross track error and orientation error
 
-Assum the vehicle is travelling a straight road and the longitudinal direction is teh same as the x-axis:
+Assum the vehicle is travelling a straight road and the longitudinal direction is the same as the x-axis:
 
 The cross track error (cte) is the difference between the difference between the line and the current vehicle position y. The reference line is the 3rd order polynomial *f(x)* and CTE at the current state is defined as:
 
@@ -104,7 +106,7 @@ The orientation error (eψ) is the desired orientation subtracted from the curre
 ```
 eψ = ψ - ψdes
 ```
- ​	
+	
 ψ is known as part of the state. I calculated ψdes (desired psi) as the tangential angle of the polynomil *f* evaluated at *x*, *arctan(f'(x))*. *f'* is the derivative of the polynomial.
 
 I did this in lines 139 and 140 in `main.cpp`.
@@ -150,17 +152,17 @@ The vehicle model is defined as following:
 
 ![alt text][image2]
 
-I defined this model by constraining the state at time t+1 by setting the values within `fg` to the difference of state at time t+1 and above formula. I did this in lines 118 to 125 in `MPC.cpp`. 
+I defined this model by constraining the state at time t+1. I set the values within `fg` to the difference of state at time t+1 and above equations. I did this in lines 118 to 125 in `MPC.cpp`. 
 
-Except the initial state, I also set the corresponding `constraints_lowerbound` and the `constraints_upperbound` values to 0. This force the relationships described by the model to hold true. I did this in lines 204 to 223 in `MPC.cpp`.
+Except the initial state, I set the corresponding `constraints_lowerbound` and the `constraints_upperbound` values to 0. This forced the relationships described by the model to hold true. I did this in lines 204 to 223 in `MPC.cpp`.
  
 #### 6. Handle Latency
 
-In a real car, an actuation command won't execute instantly = there will be a delay ~100ms as the command propagates throught the system.
+In a real car, an actuation command won't execute instantly. There will be a delay ~100ms as the command propagates through the system.
 
-To overcome, I modeled this latency in the MPC system. I simulated using the vehicle model starting from the current state for the duration of the latency. The resulting state from the simulation is the new initial state for MPC.
+To overcome, I modeled this latency in the MPC system. I ran a simulation using the vehicle model starting from the current state for the duration of the latency. The resulting state from the simulation is the new initial state for MPC.
 
-I did this simulation in lines 278 to 292 in the function `Simulate()` of `MPC.cpp`, and lines 100 to 110 in `main.cpp`.
+I did this in lines 278 to 292 in the function `Simulate()` of `MPC.cpp`, and lines 100 to 110 in `main.cpp`.
 
 #### 7. Tuning MPC
 
@@ -168,4 +170,8 @@ I tuned the MPC by plotting the CTE, steering angle, and speed errors in the fir
 
 ![alt text][image3]
 
-I multiplied different parts of the cost function with values > 1 to obtain smoother transitions.
+I multiplied different parts in the cost function with values > 1 to obtain smoother transitions.
+
+### Result
+
+The vehicle successfully drove a lap around the track.
